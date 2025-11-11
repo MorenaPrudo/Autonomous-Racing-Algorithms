@@ -30,7 +30,7 @@ private:
     float VISION_ANGLE_MIN = -1.5707;
     float VISION_ANGLE_MAX = 1.5707;
     int CONV_SIZE = 3;
-    int MAX_LIDAR_DIST = 3;  // in m
+    int MAX_LIDAR_DIST = 3;  // in m s
 
     cv::Mat preprocess_lidar(float* ranges, float rad_increment, int length, float rad_min, float rad_max)
     {   
