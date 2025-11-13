@@ -6,6 +6,7 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include <opencv2/opencv.hpp>
+#include <utility>
 #include <cmath>
 /// CHECK: include needed ROS msg type headers and libraries
 
@@ -30,7 +31,7 @@ private:
     float VISION_ANGLE_MIN = -1.5707;
     float VISION_ANGLE_MAX = 1.5707;
     int CONV_SIZE = 3;
-    int MAX_LIDAR_DIST = 3;  // in m s
+    int MAX_LIDAR_DIST = 3;  // in m
 
     cv::Mat preprocess_lidar(float* ranges, float rad_increment, int length, float rad_min, float rad_max)
     {   
@@ -55,18 +56,48 @@ private:
         return convolution;
     }
 
-    void find_max_gap(float* ranges, int* indice)
-    {   
-        // Return the start index & end index of the max gap in free_space_ranges
-        return;
+    void find_max_gap(cv::Mat ranges, int* indices)
+    {   int current_gap = 0;
+        int max_gap = 0;
+        int end_i = 0;
+
+        //finds where largest gap of space away from nearest obstacle
+        for (int i = 0; i<ranges.cols; i++) {
+            if (ranges.at<float>(0,i) != 0){
+                current_gap++;
+            } else {
+                if (current_gap > max_gap) {
+                    max_gap = current_gap;
+                    end_i = i;
+                    current_gap = 0;
+                }
+            }
+        }
+        
+        if (current_gap > max_gap) {
+            max_gap = current_gap;
+            end_i = i;
+        }
+        
+        //modifies the passed in indices array to the start and end indices of the max gap
+        indices[0] = end_i - max_gap;
+        indices[1] =  end_i;
     }
 
-    void find_best_point(float* ranges, int* indice)
+    int find_best_point(float* ranges, int* indices)
     {   
-        // Start_i & end_i are start and end indicies of max-gap range, respectively
-        // Return index of best point in ranges
-	    // Naive: Choose the furthest point within ranges and go there
-        return;
+        //returns index center of max gap
+        return (indices[0] + indices[1])/2;
+    }
+
+    float get_angle(int index, int ranges_length, float angle_increment){
+        //the max and min angles for our cutoff are the same, so the forward facing angle, 0, should be the midpoint
+        int midpoint = ranges_length/2;
+        //get index distance from the 0 angle, and multiply by the angle increment
+        float angle = (index - midpoint) * angle_increment;
+
+        //divide by 2 for steering angle
+        return angle/2;
     }
 
 
