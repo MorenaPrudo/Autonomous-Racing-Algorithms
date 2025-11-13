@@ -4,7 +4,6 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
-#include "sensor_msgs/msg/laser_scan.hpp"
 #include <opencv2/opencv.hpp>
 #include <utility>
 #include <cmath>

@@ -7,9 +7,11 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(ackermann_msgs REQUIRED)
+find_package(opencv2 REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -22,5 +24,13 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
+
+add_executable(reactive src/reactive.cpp)
+ament_target_dependencies(reactive rclcpp sensor_msgs nav_msgs ackermann_msgs opencv2)
+
+install(TARGETS
+  reactive
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()
