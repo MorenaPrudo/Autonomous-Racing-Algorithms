@@ -8,11 +8,8 @@
 #include <opencv2/opencv.hpp>
 #include <utility>
 #include <cmath>
-/// CHECK: include needed ROS msg type headers and libraries
 
 class ReactiveFollowGap : public rclcpp::Node {
-// Implement Reactive Follow Gap on the car
-// This is just a template, you are free to implement your own node!
 
 public:
     ReactiveFollowGap() : Node("reactive_node")
@@ -27,11 +24,13 @@ private:
     std::string lidarscan_topic = "/scan";
     std::string drive_topic = "/drive";
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_publisher;
-    rclcpp::Subscription<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr laser_subscriber;
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laser_subscriber;
     float VISION_ANGLE_MIN = -1.5707;
     float VISION_ANGLE_MAX = 1.5707;
     int CONV_SIZE = 3;
     int MAX_LIDAR_DIST = 3;  // in m
+    float BUBBLE_RADIUS = 0.5; // in m
+    float SPEED = 6;
 
     cv::Mat preprocess_lidar(float* ranges, float rad_increment, int length, float rad_min, float rad_max)
     {   
@@ -84,7 +83,7 @@ private:
         indices[1] =  end_i;
     }
 
-    int find_best_point(float* ranges, int* indices)
+    int find_best_point(int* indices)
     {   
         //returns index center of max gap
         return (indices[0] + indices[1])/2;
@@ -102,19 +101,56 @@ private:
 
 
     void lidar_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
-    {   
-        // Process each LiDAR scan as per the Follow Gap algorithm & publish an AckermannDriveStamped Message
+    { 
+        float angle_increment = scan_msg->angle_increment;
+        float angle_min = scan_msg->angle_min;
+        float angle_max = scan_msg->angle_max;
+        float* ranges = scan_msg->ranges;
+        int length = std::round((angle_max - angle_min)/angle_increment) + 1;
 
-        /// TODO:
-        // Find closest point to LiDAR
+        cv::Mat processed_ranges = preprocess_lidar(ranges,angle_increment,length,angle_min,angle_max);
 
-        // Eliminate all points inside 'bubble' (set them to zero) 
+        //create a safety bubble around the closest obstacle
+        float min;
+        cv::Point min_location;
+        cv::minMaxLoc(processed_ranges, &min, nullptr, &min_location, nullptr);
+        int min_i = min_location.x;
 
-        // Find max length gap 
+        //get angular size of bubble 
+        //note the factor of 2 was omitted as it would be added to
+        //both sides of closest obtacle location
+        float angular_size = std::atan(BUBBLE_RADIUS/min);
+        
+        //get angular size as indices
+        int indices = std::cell(angular_size/angle_increment);
 
-        // Find the best point in the gap 
+        //make sure bubble indices wont be out of bounds
+        int bubble_min_i = std::max(0,min_i - indices);
+        int bubble_max_i = std::min(length-1, indices + min_i)
 
-        // Publish Drive message
+        //zero out all values in safety bubble
+        processed_ranges.colRange(bubble_min_i, bubble_max_i) = 0;
+
+        //get indices of the max gap (largest gap of freespace around the closest obstacle)
+        int* gap_indices;
+        find_max_gap(processed_ranges,gap_indices);
+
+        //get steering angle from best point in max gap
+        float steering_angle = get_angle(find_best_point(gap_indices),length,angle_increment);
+
+        //publish an Ackermann Drive Stamped message
+        auto msg = ackermann_msgs::AckermannDriveStamped();
+        msg.header.stamp = this->get_clock()->now();
+        msg.header.frame_id = "base_link";
+
+        msg.drive.speed = SPEED;
+        msg.drive.steering_angle = steering_angle;
+
+        drive_publisher->publish(msg);
+
+        
+
+
     }
 
 
