@@ -9,9 +9,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
 find_package(ackermann_msgs REQUIRED)
-find_package(opencv2 REQUIRED)
+find_package(OpenCV REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -26,7 +25,7 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(reactive src/reactive.cpp)
-ament_target_dependencies(reactive rclcpp sensor_msgs nav_msgs ackermann_msgs opencv2)
+ament_target_dependencies(reactive rclcpp sensor_msgs ackermann_msgs OpenCV)
 
 install(TARGETS
   reactive
