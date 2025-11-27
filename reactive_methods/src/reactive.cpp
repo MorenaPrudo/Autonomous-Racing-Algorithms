@@ -28,11 +28,13 @@ private:
     float VISION_ANGLE_MAX = 2.2;
     int CONV_SIZE = 5;
     int BEST_POINT_CONV_SIZE = 75;
-    int MAX_LIDAR_DIST = 6;  // in m
-    float BUBBLE_RADIUS = 0.5; // in m
-    float SPEED = 3;
+    int MAX_LIDAR_DIST = 10;  // in m
+    float BUBBLE_RADIUS = 0.8; // in m
+    float SPEED = 7;
     float CORNER_ANGLE = 0.175;
-    float CORNER_SPEED = 1;
+    float DISPARITY_THRESHOLD = 0.3;
+    float SLOW_DOWN_SPEED = 5;
+    float BREAK_SPEED = 1;
 
     cv::Mat preprocess_lidar(std::vector<float> ranges, float rad_increment, int length, float rad_min, float rad_max)
     {   
@@ -44,7 +46,7 @@ private:
         int max_index = std::round((VISION_ANGLE_MAX - rad_max) / rad_increment);
         cv::Mat sliced_ranges_mat = ranges_mat.colRange(std::max(0,min_index), std::min(ranges_mat.cols, length + max_index));
        
-        //reducing noise in lidar data by setting each value to a mean
+        //reducing noise in lidar data by setting each value to a mean (across a window - CONV_SIZE)
         cv::Mat kernel = cv::Mat::ones(1,CONV_SIZE, CV_32F);
         cv::Mat convolution;
         cv::filter2D(sliced_ranges_mat, convolution, -1, kernel);
@@ -55,6 +57,49 @@ private:
         cv::min(convolution,MAX_LIDAR_DIST,convolution);
 
         return convolution;
+    }
+    
+    int disparity_extend(cv::Mat proc_ranges, float angle_increment) {
+        
+        //get difference between adjacent readings
+        cv::Mat kernel = (cv::Mat_<float>(1, 2) << 1, -1);
+        cv::Mat differences;
+        cv::filter2D(proc_ranges, differences, -1, kernel);
+
+        for(int i = 0; i<proc_ranges.cols - 1;i++){
+            //if the difference is greater than our threshold, set nearby by readings(enough to cover half the width of the robot) 
+            //to the lower value, so the robot can completely avoid the obstacle.
+            if(differences.at<float>(0,i) > DISPARITY_THRESHOLD) {
+                float disparity_value = proc_ranges.at<float>(0,i+1);
+                float angular_size = std::atan(BUBBLE_RADIUS/disparity_value);
+                int indices = std::ceil(angular_size/angle_increment);
+
+                //make sure bubble index wont be out of bounds
+                int bubble_min_i = std::max(0,i+1 - indices);
+
+                //extend disparities left
+                cv::Mat bubble = proc_ranges.colRange(bubble_min_i,i+1);
+                cv::min(bubble,disparity_value,bubble);
+            }
+
+            if(differences.at<float>(0,i) < -DISPARITY_THRESHOLD) {
+                float disparity_value = proc_ranges.at<float>(0,i);
+                float angular_size = std::atan(BUBBLE_RADIUS/disparity_value);
+                int indices = std::ceil(angular_size/angle_increment);
+
+                //make sure bubble index wont be out of bounds
+                int bubble_max_i = std::min(proc_ranges.cols,i+1 + indices);
+                
+                //extend disparities right
+                cv::Mat bubble = proc_ranges.colRange(i+1,bubble_max_i);
+                cv::min(bubble, disparity_value,bubble);
+            }
+        }
+
+        cv::Point max_location;
+        cv::minMaxLoc(proc_ranges, nullptr, nullptr, nullptr, &max_location);
+        return max_location.x;
+        
     }
 
     void find_max_gap(cv::Mat ranges, int* indices)
@@ -108,20 +153,11 @@ private:
         float angle = (index - midpoint) * angle_increment;
 
         //divide by 2 for steering angle
-        return angle/2;
+        return angle;
     }
 
-
-    void lidar_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
-    { 
-        float angle_increment = scan_msg->angle_increment;
-        float angle_min = scan_msg->angle_min;
-        float angle_max = scan_msg->angle_max;
-        std::vector<float> ranges = scan_msg->ranges;
-        int length = ranges.size();
-
-        cv::Mat processed_ranges = preprocess_lidar(ranges,angle_increment,length,angle_min,angle_max);
-        length = processed_ranges.cols;
+    int basic_ftg(cv::Mat processed_ranges, float angle_increment) {
+        int length = processed_ranges.cols;
 
         //create a safety bubble around the closest obstacle
         double min;
@@ -133,6 +169,7 @@ private:
         //note the factor of 2 was omitted as it would be added to
         //both sides of closest obtacle location
         float angular_size = std::atan(BUBBLE_RADIUS/(float)min);
+        
         
         //get angular size as indices
         int indices = std::ceil(angular_size/angle_increment);
@@ -149,7 +186,26 @@ private:
         find_max_gap(processed_ranges,gap_indices);
 
         //get steering angle from best point in max gap
-        float steering_angle = get_angle(find_best_point(gap_indices,processed_ranges),length,angle_increment);
+        return find_best_point(gap_indices,processed_ranges);
+    }
+
+    void lidar_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
+    { 
+        float angle_increment = scan_msg->angle_increment;
+        float angle_min = scan_msg->angle_min;
+        float angle_max = scan_msg->angle_max;
+        std::vector<float> ranges = scan_msg->ranges;
+        int length = ranges.size();
+
+        cv::Mat processed_ranges = preprocess_lidar(ranges,angle_increment,length,angle_min,angle_max);
+        length = processed_ranges.cols;
+
+        int best_i = disparity_extend(processed_ranges, angle_increment);
+        //int best_i = basic_ftg(processed_ranges, angle_increment);
+        
+        //find angle to steer to based on the index chosen
+        float steering_angle = get_angle(best_i,length,angle_increment);
+        
 
         //publish an Ackermann Drive Stamped message
         auto msg = ackermann_msgs::msg::AckermannDriveStamped();
@@ -158,8 +214,14 @@ private:
 
         msg.drive.speed = SPEED;
         msg.drive.steering_angle = steering_angle;
-        if (std::abs(steering_angle) > CORNER_ANGLE){
-           msg.drive.speed = CORNER_SPEED; 
+        
+        //change speed based on safeness
+        if (processed_ranges.at<float>(0,best_i) < (0.75 * SPEED - 0.5) || std::abs(steering_angle) > CORNER_ANGLE ) {
+            std::cout<< "should slow down" << std::endl;
+            msg.drive.speed = SLOW_DOWN_SPEED;
+        }   
+        if (processed_ranges.at<float>(0,best_i) < 3.5) {
+            msg.drive.speed = BREAK_SPEED;
         }
 
         drive_publisher->publish(msg);
@@ -172,6 +234,7 @@ private:
 
 
 };
+
 int main(int argc, char ** argv) {
     rclcpp::init(argc, argv);
     rclcpp::spin(std::make_shared<ReactiveFollowGap>());
